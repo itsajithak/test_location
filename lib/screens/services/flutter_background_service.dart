@@ -7,9 +7,9 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:test_app/screens/test_app_screen/test_app_screen_controller.dart';
 
 Future<void> initializeService() async {
+  DartPluginRegistrant.ensureInitialized();
   final service = FlutterBackgroundService();
   const AndroidNotificationChannel channel = AndroidNotificationChannel(
     'test_app_channel',
@@ -64,28 +64,31 @@ void onStart(ServiceInstance service) async {
   });
 
   service.on('startLocationUpdates').listen((event) async {
-    Timer.periodic(const Duration(seconds: 2), (timer) async {
+    Timer.periodic(const Duration(seconds: 30), (timer) async {
       try {
         Position position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
           forceAndroidLocationManager: true,
         );
-        debugPrint(
-            '*** Background Location: ${position.latitude}, ${position.longitude}');
+
         final prefs = await SharedPreferences.getInstance();
         final existingData = prefs.getStringList('location_history') ?? [];
         final newLocation = {
           'lat': position.latitude,
           'lng': position.longitude,
-          // 'time': position.timestamp,
         };
         existingData.add(jsonEncode(newLocation));
+        await prefs.setStringList('location_history', existingData);
         final decodedList = existingData
             .map((e) => jsonDecode(e) as Map<String, dynamic>)
             .toList();
-        TestAppScreenConImpl().locationHistoryStream(decodedList);
-        debugPrint('the data is *** ${existingData.length}');
-        await prefs.setStringList('location_history', existingData);
+        final sendPort =
+            IsolateNameServer.lookupPortByName('location_updates_port');
+        if (sendPort != null) {
+          sendPort.send(decodedList);
+        }
+        debugPrint(
+            '*** Background Location sent: ${position.latitude}, ${position.longitude}');
       } catch (e) {
         debugPrint('Error getting location: $e');
       }

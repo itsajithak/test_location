@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,10 +13,10 @@ import 'package:test_app/components/custom_elevated_button.dart';
 import 'package:test_app/screens/test_app_screen/device_screens/mobile_screen.dart';
 import 'package:test_app/screens/test_app_screen/device_screens/pc_screen.dart';
 import 'package:test_app/screens/test_app_screen/device_screens/tab_screen.dart';
+import 'package:test_app/screens/test_app_screen/location_bloc/location_bloc.dart';
 import 'package:test_app/screens/test_app_screen/test_app_screen_controller.dart';
 import 'package:test_app/utils/app_colors.dart';
 import 'package:test_app/utils/app_widget_utils.dart';
-import 'package:web_socket_channel/io.dart';
 
 class TestAppScreen extends StatefulWidget {
   const TestAppScreen({super.key});
@@ -23,44 +26,44 @@ class TestAppScreen extends StatefulWidget {
 }
 
 class _TestAppScreenState extends State<TestAppScreen> {
-  final _testScreenCon = TestAppScreenConImpl();
   final _appColors = AppColors();
-  IOWebSocketChannel? _channel;
   StreamSubscription<Position>? _position;
   Timer? _locationPollTimer;
+  final ReceivePort _receivePort = ReceivePort();
 
   @override
   void initState() {
     super.initState();
-    _loadInitialLocationHistory();
-    _startPollingLocationUpdates();
-    _testScreenCon.locationHistoryStreamCon.listen((event) {
-      debugPrint('the event is ${event.length}');
-      setState(() {});
-    });
+    _receiveLocationPort();
   }
 
-  void _startPollingLocationUpdates() {
-    _locationPollTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
-      await _loadInitialLocationHistory();
-    });
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      debugPrint('🔄 App resumed — re-registering ReceivePort');
+      _receiveLocationPort(); // Safety re-register
+    }
   }
 
-  Future<void> _loadInitialLocationHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final storedData = await prefs.getStringList('location_history') ?? [];
-
-    final decodedList =
-        storedData.map((e) => jsonDecode(e) as Map<String, dynamic>).toList();
-    debugPrint('the decode list is ${decodedList.length}');
-
-    _testScreenCon.locationHistoryStream(decodedList);
+  _receiveLocationPort() {
+    IsolateNameServer.removePortNameMapping('location_updates_port');
+    IsolateNameServer.registerPortWithName(
+        _receivePort.sendPort, 'location_updates_port');
+    _receivePort.listen((data) {
+      if (data is List) {
+        final decodedList =
+            data.map((e) => Map<String, dynamic>.from(e)).toList();
+        debugPrint('inside the init state *** ${decodedList.length}');
+        context.read<LocationBloc>().add(LatLongFetchEvent(decodedList));
+      }
+    });
   }
 
   @override
   void dispose() {
+    IsolateNameServer.removePortNameMapping('location_updates_port');
+    _receivePort.close();
     _position?.cancel();
-    _channel?.sink.close();
     super.dispose();
   }
 
@@ -108,27 +111,60 @@ class _TestAppScreenState extends State<TestAppScreen> {
           const SizedBox(
             height: 18,
           ),
-          StreamBuilder<List<Map<String, dynamic>>>(
-            stream: _testScreenCon.locationHistoryStreamCon,
-            builder: (context, snapshot) {
-              if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                return const Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: Text("No location data found"),
-                );
-              }
-              final locations = snapshot.data!;
-
-              if (screenWidth < 600) {
+          BlocBuilder<LocationBloc, LocationState>(
+            builder: (context, state) {
+              if (state is FetchLocationState) {
+                final locations = state.locationList;
+                if (screenWidth < 600) {
+                  return Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.all(16.0),
+                      itemCount: locations.length,
+                      itemBuilder: (context, index) {
+                        final location = locations[index];
+                        final lat = location['lat'];
+                        final lng = location['lng'];
+                        return Card(
+                          elevation: 3,
+                          margin: const EdgeInsets.symmetric(vertical: 6),
+                          child: Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                AppWidgetUtils.buildTextWidget(
+                                    'Request ${index + 1}',
+                                    fontWeight: FontWeight.w700),
+                                Row(
+                                  children: [
+                                    AppWidgetUtils.buildTextWidget('Lat: $lat'),
+                                    AppWidgetUtils.buildSizedBox(custWidth: 12),
+                                    AppWidgetUtils.buildTextWidget('Lng: $lng'),
+                                  ],
+                                )
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                }
                 return Expanded(
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(16.0),
+                  child: GridView.builder(
+                    padding: const EdgeInsets.all(16),
                     itemCount: locations.length,
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12,
+                      childAspectRatio: 3 / 0.7,
+                    ),
                     itemBuilder: (context, index) {
                       final location = locations[index];
                       final lat = location['lat'];
                       final lng = location['lng'];
-
                       return Card(
                         elevation: 3,
                         margin: const EdgeInsets.symmetric(vertical: 6),
@@ -143,34 +179,10 @@ class _TestAppScreenState extends State<TestAppScreen> {
                   ),
                 );
               }
-              return Expanded(
-                child: GridView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: locations.length,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
-                    childAspectRatio: 3 / 0.7,),
-                  itemBuilder: (context, index) {
-                    final location = locations[index];
-                    final lat = location['lat'];
-                    final lng = location['lng'];
-                    return Card(
-                      elevation: 3,
-                      margin: const EdgeInsets.symmetric(vertical: 6),
-                      child: ListTile(
-                        leading: const Icon(Icons.location_on),
-                        title: Text("Lat: $lat"),
-                        subtitle: Text("Lng: $lng"),
-                        trailing: Text("No: ${index + 1}"),
-                      ),
-                    );
-                  },
-                ),
-              );
+
+              return AppWidgetUtils.buildSizedBox();
             },
-          ),
+          )
         ],
       ),
     );
@@ -211,12 +223,12 @@ class _TestAppScreenState extends State<TestAppScreen> {
         text: 'Start Monitoring',
         fontSize: 16,
         onPressed: () async {
-          // _startMonitoring();
-          // await FlutterBackgroundService().startService();
-          final service = FlutterBackgroundService();
-          await service.startService();
-          service.invoke('startMonitoring');
-          service.invoke("startLocationUpdates");
+          showDialog(
+            context: context,
+            builder: (context) {
+              return _buildAlertDialog(true);
+            },
+          );
         },
       ),
       CustomElevatedButton(
@@ -228,11 +240,12 @@ class _TestAppScreenState extends State<TestAppScreen> {
         text: 'Stop Monitoring',
         fontSize: 16,
         onPressed: () async {
-          // _stopMonitoring();
-          final service = FlutterBackgroundService();
-          await service.startService();
-          service.invoke('stopMonitoring');
-          service.invoke("stopService");
+          showDialog(
+            context: context,
+            builder: (context) {
+              return _buildAlertDialog(false);
+            },
+          );
         },
       ),
     ];
@@ -261,5 +274,84 @@ class _TestAppScreenState extends State<TestAppScreen> {
     } else {
       debugPrint('Notification permission denied');
     }
+  }
+
+  AlertDialog _buildAlertDialog(bool isStart) {
+    return AlertDialog(
+      content: SizedBox(
+        width: MediaQuery.sizeOf(context).width / 4,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildHeaderDialog(isStart),
+            const Divider(),
+            _buildContent(isStart),
+            AppWidgetUtils.buildSizedBox(custHeight: 12),
+            _buildMonitoringBtns(isStart)
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderDialog(bool isStart) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        AppWidgetUtils.buildTextWidget(
+            isStart ? 'Start Monitoring' : 'Stop Monitoring',
+            fontSize: 18,
+            fontWeight: FontWeight.bold),
+        IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.close))
+      ],
+    );
+  }
+
+  Widget _buildContent(bool isStart) {
+    return AppWidgetUtils.buildTextWidget(
+      'Are you sure want to ${isStart ? 'start' : 'stop'} monitoring',
+      textAlign: TextAlign.center
+    );
+  }
+
+  Widget _buildMonitoringBtns(bool isStart) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        CustomElevatedButton(
+          buttonBackgroundColor: _appColors.redColor,
+          fontColor: _appColors.whiteColor,
+          width: MediaQuery.sizeOf(context).width / 4,
+          text: 'No',
+          fontSize: 16,
+          onPressed: () => Navigator.pop(context),
+        ),
+        AppWidgetUtils.buildSizedBox(custWidth: 12),
+        CustomElevatedButton(
+          text: 'YES',
+          fontSize: 16,
+          buttonBackgroundColor: _appColors.greenColor,
+          fontColor: _appColors.whiteColor,
+          width: MediaQuery.sizeOf(context).width / 4,
+          onPressed: isStart
+              ? () async {
+                  final service = FlutterBackgroundService();
+                  await service.startService();
+                  service.invoke('startMonitoring');
+                  service.invoke("startLocationUpdates");
+                  Navigator.pop(context);
+                }
+              : () async {
+                  final service = FlutterBackgroundService();
+                  await service.startService();
+                  service.invoke('stopMonitoring');
+                  service.invoke("stopService");
+                  Navigator.pop(context);
+                },
+        )
+      ],
+    );
   }
 }
