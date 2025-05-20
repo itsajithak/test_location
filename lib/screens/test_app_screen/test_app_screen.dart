@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:isolate';
 import 'dart:ui';
 
@@ -8,13 +7,11 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:test_app/components/custom_elevated_button.dart';
 import 'package:test_app/screens/test_app_screen/device_screens/mobile_screen.dart';
 import 'package:test_app/screens/test_app_screen/device_screens/pc_screen.dart';
 import 'package:test_app/screens/test_app_screen/device_screens/tab_screen.dart';
 import 'package:test_app/screens/test_app_screen/location_bloc/location_bloc.dart';
-import 'package:test_app/screens/test_app_screen/test_app_screen_controller.dart';
 import 'package:test_app/utils/app_colors.dart';
 import 'package:test_app/utils/app_widget_utils.dart';
 
@@ -311,9 +308,8 @@ class _TestAppScreenState extends State<TestAppScreen> {
 
   Widget _buildContent(bool isStart) {
     return AppWidgetUtils.buildTextWidget(
-      'Are you sure want to ${isStart ? 'start' : 'stop'} monitoring',
-      textAlign: TextAlign.center
-    );
+        'Are you sure want to ${isStart ? 'start' : 'stop'} monitoring',
+        textAlign: TextAlign.center);
   }
 
   Widget _buildMonitoringBtns(bool isStart) {
