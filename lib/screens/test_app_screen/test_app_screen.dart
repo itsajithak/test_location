@@ -42,19 +42,19 @@ class _TestAppScreenState extends State<TestAppScreen> {
     }
   }
 
-  _receiveLocationPort() {
-    IsolateNameServer.removePortNameMapping('location_updates_port');
-    IsolateNameServer.registerPortWithName(
-        _receivePort.sendPort, 'location_updates_port');
-    _receivePort.listen((data) {
-      if (data is List) {
-        final decodedList =
-            data.map((e) => Map<String, dynamic>.from(e)).toList();
-        debugPrint('inside the init state *** ${decodedList.length}');
-        context.read<LocationBloc>().add(LatLongFetchEvent(decodedList));
+  void _receiveLocationPort() {
+    FlutterBackgroundService().on('locationUpdate').listen((event) {
+      if (event != null && event['locations'] != null) {
+        final List locations = event['locations'];
+        final List<Map<String, dynamic>> locationList =
+        locations.map((e) => Map<String, dynamic>.from(e)).toList();
+        context.read<LocationBloc>().add(
+          LatLongFetchEvent(locationList),
+        );
       }
     });
   }
+
 
   @override
   void dispose() {

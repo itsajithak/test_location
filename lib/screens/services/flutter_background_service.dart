@@ -9,7 +9,6 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> initializeService() async {
-  DartPluginRegistrant.ensureInitialized();
   final service = FlutterBackgroundService();
   const AndroidNotificationChannel channel = AndroidNotificationChannel(
     'test_app_channel',
@@ -43,21 +42,12 @@ Future<void> initializeService() async {
   service.startService();
 }
 
-@pragma('vm-entry-point')
+@pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
-  DartPluginRegistrant.ensureInitialized();
+  // Removed DartPluginRegistrant.ensureInitialized();
 
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-      FlutterLocalNotificationsPlugin();
-
-  if (service is AndroidServiceInstance) {
-    service.on('setAsForeground').listen((event) {
-      service.setAsForegroundService();
-    });
-    service.on('setAsBackground').listen((event) {
-      service.setAsBackgroundService();
-    });
-  }
+  FlutterLocalNotificationsPlugin();
 
   service.on('stopService').listen((event) {
     service.stopSelf();
@@ -82,11 +72,7 @@ void onStart(ServiceInstance service) async {
         final decodedList = existingData
             .map((e) => jsonDecode(e) as Map<String, dynamic>)
             .toList();
-        final sendPort =
-            IsolateNameServer.lookupPortByName('location_updates_port');
-        if (sendPort != null) {
-          sendPort.send(decodedList);
-        }
+        service.invoke('locationUpdate', {'locations': decodedList});
         debugPrint(
             '*** Background Location sent: ${position.latitude}, ${position.longitude}');
       } catch (e) {
@@ -96,7 +82,7 @@ void onStart(ServiceInstance service) async {
   });
 
   service.on('startMonitoring').listen(
-    (event) async {
+        (event) async {
       debugPrint("Received startMonitoring event in service isolate");
       await flutterLocalNotificationsPlugin.show(
         999,
@@ -107,10 +93,9 @@ void onStart(ServiceInstance service) async {
             'test_app_channel',
             'Location Tracking',
             channelDescription:
-                'This channel is used for background location tracking.',
+            'This channel is used for background location tracking.',
             importance: Importance.high,
             priority: Priority.high,
-            // icon: '@mipmap/ic_launcher',
           ),
         ),
       );
@@ -118,7 +103,7 @@ void onStart(ServiceInstance service) async {
   );
 
   service.on('stopMonitoring').listen(
-    (event) async {
+        (event) async {
       await flutterLocalNotificationsPlugin.show(
         999,
         'Tracking Stopped',
@@ -128,10 +113,9 @@ void onStart(ServiceInstance service) async {
             'test_app_channel',
             'Location Tracking',
             channelDescription:
-                'This channel is used for background location tracking.',
+            'This channel is used for background location tracking.',
             importance: Importance.high,
             priority: Priority.high,
-            // icon: '@mipmap/ic_launcher',
           ),
         ),
       );
@@ -150,11 +134,4 @@ Future<void> requestPermissions() async {
       return;
     }
   }
-
-  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-      FlutterLocalNotificationsPlugin();
-  await flutterLocalNotificationsPlugin
-      .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>()
-      ?.requestNotificationsPermission();
 }
